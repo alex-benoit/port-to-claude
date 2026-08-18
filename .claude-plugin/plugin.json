@@ -1,0 +1,8 @@
+{
+  "name": "port-to-claude",
+  "description": "Inventories the LLM call sites in a repo, recommends a Claude model per call site, proves the swap with real side-by-side output and a cost delta, and opens a PR containing only the switch.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Alex Benoit"
+  }
+}

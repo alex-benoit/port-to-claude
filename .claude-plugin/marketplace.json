@@ -1,0 +1,19 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "port-to-claude",
+  "description": "Port an existing app's LLM call sites to Claude, with a per-call-site recommendation and a cost/quality delta proven on your own keys.",
+  "owner": {
+    "name": "Alex Benoit"
+  },
+  "plugins": [
+    {
+      "name": "port-to-claude",
+      "description": "Inventories the LLM call sites in a repo, recommends a Claude model per call site, proves the swap with real side-by-side output and a cost delta, and opens a PR containing only the switch.",
+      "author": {
+        "name": "Alex Benoit"
+      },
+      "category": "development",
+      "source": "./"
+    }
+  ]
+}

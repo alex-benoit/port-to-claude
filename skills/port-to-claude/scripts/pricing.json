@@ -1,0 +1,15 @@
+{
+  "_comment": "Rates ship null on purpose. Fetch current pricing and fill these in before running cost maths. See references/pricing.md.",
+  "verified_on": null,
+  "currency": "USD",
+  "unit": "per_million_tokens",
+  "models": {
+    "_shape": {
+      "input": null,
+      "output": null,
+      "cache_write": null,
+      "cache_read": null,
+      "batch_discount": null
+    }
+  }
+}
