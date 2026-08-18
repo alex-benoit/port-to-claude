@@ -8,6 +8,10 @@ the credibility that carries the rest of the table.
 Check `references/pricing.md` for the current model list before recommending — model names
 change faster than this file does.
 
+Every row here produces a PR with a working diff, including the rows whose recommendation is
+against merging it. The recommendation goes in the body, not in the decision to write the
+code. See Phase 4 of `SKILL.md` for the change-kind labels these rows map to.
+
 ## By shape
 
 | Task shape | Looks like | Recommend | Why |
@@ -17,7 +21,9 @@ change faster than this file does.
 | **Short generation** | A sentence, a title, a summary line | Small-to-mid | Cheap; judge on quality in the spot-check, not price |
 | **Long-context synthesis** | Many documents in, reasoned analysis out | Mid-to-top tier | The one place paying up is usually right |
 | **Agentic tool loop** | Multi-turn, tool calls, retries | Mid-to-top tier | Tool-use reliability dominates per-token cost — a cheap model that loops twice is not cheap |
-| **Embeddings** | `.embeddings.create` | **Do not migrate** | Anthropic does not serve embeddings. Say so plainly and leave the call site alone |
+| **Embeddings** | `.embeddings.create` | **Third-party redirect — Voyage** | Anthropic serves no embeddings model and recommends Voyage. `voyage-4-lite` is $0.02/M, at parity with `text-embedding-3-small`, so the swap is usually cost-neutral. Ship the diff, label it a third-party redirect, and say plainly it is not a move to Anthropic |
+| **Audio transcription** | `.audio.transcriptions`, Whisper | **Partial port** | No Claude model accepts audio input, so the transcription itself does not move. The portable part is domain hinting — a `prompt` parameter correcting jargon, names, or codes is a language task, and a Claude pass over the raw transcript does it better. Say clearly that speech-to-text stays where it is |
+| **Moderation** | `.moderations.create` | **Full swap, usually recommend against** | Portable to a prompted Claude classifier, but the incumbent endpoint is free and this is not. Ship the diff, show the per-call cost it introduces, and let the reviewer weigh that against the control over categories and thresholds it buys |
 | **Fine-tuned model** | Custom model ID | **Flag, do not auto-switch** | Not a like-for-like swap |
 
 ## Extended thinking

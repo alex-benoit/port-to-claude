@@ -11,8 +11,10 @@ adapters exist. **This skill is not a converter. It is a decision layer.** Its j
 answer "should we, and where, and what will it cost" with evidence from the developer's
 own repo and their own keys.
 
-The deliverable is a PR whose diff is **only the provider switch** and whose *description*
-carries the whole analysis. Nothing else lands in the target repo — no eval directories,
+The deliverable is one PR per call site, whose diff is **only the provider switch** and
+whose *description* carries the whole analysis — including on the call sites where the
+recommendation is to keep the incumbent. The code is always on offer; the body says what you
+think of it. Nothing else lands in the target repo — no eval directories,
 no fixtures, no scratch files. That is a hard constraint, not a preference: it is what
 makes the tool safe to run on a codebase you care about, and it means merging leaves zero
 migration-tool residue.
@@ -26,7 +28,8 @@ Read these before starting. They are what separate this from vendor spam.
 2. **Be willing to say "keep the incumbent here."** If a call site is cheaper, faster, or
    better served by what it already runs, say so in the table with the reason. A tool that
    always recommends migrating gets read as promotional and uninstalled. Honest losses are
-   what get the other rows believed.
+   what get the other rows believed. Say it in the body and **still ship the working diff** —
+   see Phase 4.
 3. **Never invent prices or benchmark numbers.** Every figure is either measured in this
    run or read from `references/pricing.md` with its verification date shown. If a rate is
    unverified, label the column **estimated** in the output. Do not smooth over a gap with
@@ -192,30 +195,105 @@ If the user has no Anthropic key, this is the moment to point them at
 
 ## Phase 4 — The PRs
 
-**One PR per call site, not one PR for the migration.** A single sweeping PR forces an
-all-or-nothing decision on a change whose whole appeal is that it is reversible. Separate
-PRs let a team migrate the cheapest call site, watch it in production for a week, and
-continue — or stop. That is the shape that actually gets merged.
+**One PR per call site, and every PR is independently mergeable.** A single sweeping PR
+forces an all-or-nothing decision on a change whose whole appeal is that it is reversible.
+Separate PRs let a team merge the one call site they believe, watch it in production for a
+week, and continue — or stop. That is the shape that actually gets merged.
 
-They stack, because the call-site changes share a base:
+**Do not stack.** Every PR branches from the same baseline commit and none depends on
+another being merged first. A reviewer must be able to merge PR 5, then PR 1, in that order,
+with no conflict and no rebase. This is a hard constraint: stacking quietly makes the first
+PR a prerequisite for every other one, which is precisely the all-or-nothing shape that
+separate PRs exist to avoid.
 
-1. **Base PR — config and dependency.** Adds the Anthropic settings and the SDK/extra
-   **without removing the incumbent**. No behaviour change; nothing calls it yet. This PR
-   is safe to merge on its own and makes every later one small.
-2. **One PR per call site**, each branched off the previous so its diff shows only its own
-   change. Body carries that call site's own evaluation: task shape, model chosen and why,
-   its own spot-check rows, and the specific failure mode a reviewer should look for.
-3. **Cleanup PR — remove the incumbent** config, dependency, and now-stale references. Only
-   valid once every call site has moved, so it goes last and merges last.
+There is no base PR and no cleanup PR. Each PR carries whatever it needs to stand alone.
 
-Rules for each PR in the stack:
+### Every call site gets a PR, including the ones you recommend against
 
-- Set the base branch to the previous PR's branch, so reviewers see one change at a time.
-- The diff is that call site's switch and nothing else. No refactors, no drive-by fixes.
-- Verify the repo still builds / type-checks / passes tests **at every step in the stack**,
-  not just at the end. A stack that only works at the tip is one PR wearing a costume.
-- If two call sites live in the same file, they still get their own PR — stack them so the
-  second rebases cleanly.
+A call site whose recommendation is **keep the incumbent** still gets a PR with a real,
+working diff. The recommendation lives in the body; the code is on offer either way. The
+reviewer reads the numbers and closes it, or merges it because they weigh the tradeoff
+differently than you did — and a closed PR is a timestamped decision with the rationale
+attached. Withholding the diff on the call sites you judged unfavourable makes the decision
+for them and hides the evidence for it.
+
+Label every PR with its **change kind** in the first line of the body, because
+"recommendation: against" means something different in each:
+
+| Kind | The diff | Example |
+|---|---|---|
+| **Full swap** | The call site moves to Claude entirely | chat completion → Messages API |
+| **Partial port** | Only the portable part moves; the rest stays put | Whisper keeps the audio; Claude does the domain-correction pass |
+| **Third-party redirect** | Moves off the incumbent, but not to Anthropic | embeddings → Voyage |
+
+A reviewer who thinks they are reading a Claude migration and finds a Voyage dependency has
+lost trust in every other row. Say which kind it is up front.
+
+### Keeping sibling PRs independent
+
+Conflicts between siblings come from shared files, and there are only three sources.
+
+1. **The dependency manifest.** Two branches appending a byte-identical line at the same
+   position merge cleanly — git resolves identical additions without a conflict. So each PR
+   may add the SDK dependency itself, **provided you emit the exact same string in the exact
+   same place every time.** A version pin or insertion point that differs between PRs breaks
+   it.
+
+2. **Lockfiles.** Never commit a regenerated `package-lock.json` / `yarn.lock` /
+   `poetry.lock` in a port PR. Two regenerated lockfiles conflict enormously and no care in
+   the manifest helps. Touch the manifest only; let the lockfile regenerate after merge.
+
+3. **Adjacent lines in shared config.** This is the one that actually bites. A block listing
+   every call site's model on consecutive lines:
+
+   ```ts
+   const MODELS = {
+     outline: "gpt-5.6-sol",   // PR A changes only this line
+     draft: "gpt-5.6-sol",     // PR B changes only this line  -> CONFLICT
+   };
+   ```
+
+   Each PR changes one line, its own, and they still collide — git needs **at least one
+   unchanged line between two branches' edits** to merge them without a conflict. Adjacent
+   changed lines conflict even when neither PR touches the other's line.
+
+   Two ways out, in order of preference:
+
+   - **Don't touch the shared block.** Have the call site read its model from a new
+     per-call-site location and leave the incumbent's constant where it sits.
+   - **Pad the block** so entries are separated by a blank or comment line. This merges
+     cleanly, but it means a PR editing a file it otherwise would not.
+
+### Verify order-independence before opening anything
+
+`git merge-tree --write-tree A B` runs a three-way merge in memory and exits non-zero on
+conflict — no checkout, no working tree, no side effects. Run it over **every ordered pair**
+of branches before opening a single PR:
+
+```bash
+for a in "${BRANCHES[@]}"; do
+  for b in "${BRANCHES[@]}"; do
+    [ "$a" = "$b" ] && continue
+    git merge-tree --write-tree "$a" "$b" >/dev/null 2>&1 || echo "CONFLICT: $a <- $b"
+  done
+done
+```
+
+For a dozen call sites that is ~132 merges and a second or two of wall time. If any pair
+conflicts, fix the branches — do not open the PRs and hope the reviewer merges in a lucky
+order. This check is what turns "should be order-independent" into a property the skill
+actually guarantees.
+
+### Rules for each PR
+
+- Branch from the baseline commit, never from a sibling. The PR's base is the repo's default
+  branch.
+- The diff is that call site's change and nothing else. No refactors, no drive-by fixes.
+- The repo builds / type-checks / passes tests with **that PR alone** applied to the
+  baseline. Never verify a PR only in combination with its siblings — that is a stack
+  wearing a costume.
+- If two call sites live in the same file, they still get their own PR. Confirm their changed
+  lines do not abut, then confirm with `merge-tree`.
 
 Generate each body from the shared analysis plus that call site's rows:
 
@@ -223,9 +301,8 @@ Generate each body from the shared analysis plus that call site's rows:
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/port-to-claude/scripts/report.py" --inventory "$TMP/inventory.json" --results "$TMP/results.json" --site "app/foo.py:42" --out "$TMP/pr-foo.md"
 ```
 
-Show the user the full stack — every branch, every diff, every body — and **ask before
-pushing any of it.** Pushing is outward-facing, and a nine-PR stack lands on other people's
-review queues.
+Show the user every branch, every diff, and every body, and **ask before pushing any of
+it.** Pushing is outward-facing, and a dozen PRs land on other people's review queues.
 
 ## Reference files
 

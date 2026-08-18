@@ -25,6 +25,18 @@ def load_pricing(path):
     return models, data.get("verified_on")
 
 
+def has_rates(rates):
+    """True only if at least one model carries real input+output rates.
+
+    A pricing.json full of nulls is truthy as a dict, which would emit a cost column
+    of em-dashes instead of omitting it. Phase 0 populates the rates; until it does,
+    the column is dropped."""
+    return any(
+        e and e.get("input") is not None and e.get("output") is not None
+        for e in rates.values()
+    )
+
+
 def cost(model, rates, input_tokens, output_tokens):
     entry = rates.get(model)
     if not entry or entry.get("input") is None or entry.get("output") is None:
@@ -75,7 +87,14 @@ def aggregate(results):
     return out
 
 
-def render_site(inventory, spotcheck, rates, verified_on, site_ref):
+KINDS = {
+    "full-swap": "full swap to Claude",
+    "partial-port": "partial port — only part of this call site moves",
+    "third-party": "third-party redirect — moves off the incumbent, but not to Anthropic",
+}
+
+
+def render_site(inventory, spotcheck, rates, verified_on, site_ref, kind="full-swap"):
     """One call site's own PR body. Kept narrow on purpose: a reviewer of a single-site
     PR should not have to read the whole migration to judge their one change."""
     path, _, line = site_ref.partition(":")
@@ -87,13 +106,19 @@ def render_site(inventory, spotcheck, rates, verified_on, site_ref):
     )
     if match is None:
         raise SystemExit(f"no invocation found for --site {site_ref}")
+    if kind not in KINDS:
+        raise SystemExit(f"unknown --kind {kind}; expected one of {', '.join(KINDS)}")
+    kind = KINDS[kind]
 
     lines = [
         "## What this PR does",
         "",
-        f"Switches one call site — `{match['file']}:{match['line']}` — to Claude. "
-        "Nothing else changes. It is part of a stack; the base PR added the config and "
-        "dependency, and the incumbent is removed in the final one.",
+        f"**Change kind: {kind}.** Switches one call site — "
+        f"`{match['file']}:{match['line']}` — and nothing else.",
+        "",
+        "This PR is independent: it branches from the default branch, carries any "
+        "dependency it needs, and can be merged on its own or alongside its siblings in "
+        "any order. Merging or closing it does not affect the others.",
         "",
         "## This call site",
         "",
@@ -129,7 +154,7 @@ def render_site(inventory, spotcheck, rates, verified_on, site_ref):
         return "\n".join(lines)
 
     agg = aggregate(rows)
-    priced = bool(rates)
+    priced = has_rates(rates)
     lines += ["## Side-by-side", "",
               f"**Tier: measured.** {spotcheck.get('samples_per_case', 1)} sample(s).",
               ""]
@@ -213,7 +238,7 @@ def render(inventory, spotcheck, rates, verified_on):
 
     agg = aggregate(spotcheck.get("results", []))
     n = spotcheck.get("samples_per_case", 1)
-    priced = bool(rates)
+    priced = has_rates(rates)
 
     add("## Side-by-side")
     add("")
@@ -287,6 +312,8 @@ def main():
     ap.add_argument("--results", type=Path, help="spot-check results (omit for estimated tier)")
     ap.add_argument("--pricing", type=Path, default=HERE / "pricing.json")
     ap.add_argument("--site", help="render one call site's PR body, e.g. app/foo.py:42")
+    ap.add_argument("--kind", default="full-swap", choices=sorted(KINDS),
+                    help="change kind for this PR (see SKILL.md Phase 4)")
     ap.add_argument("--out", type=Path)
     args = ap.parse_args()
 
@@ -295,7 +322,7 @@ def main():
     rates, verified_on = load_pricing(args.pricing)
 
     if args.site:
-        body = render_site(inventory, spotcheck, rates, verified_on, args.site)
+        body = render_site(inventory, spotcheck, rates, verified_on, args.site, args.kind)
     else:
         body = render(inventory, spotcheck, rates, verified_on)
     if args.out:

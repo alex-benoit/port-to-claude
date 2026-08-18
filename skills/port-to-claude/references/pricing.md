@@ -13,11 +13,19 @@ needs are null, and labels every figure with the `verified_on` date it used. Re-
 run — a `pricing.json` left over from last month is the stale-number failure this exists to
 prevent.
 
-Sources to fetch:
+Sources to fetch (keep these in step with `SKILL.md` Phase 0 and `pricing.json`):
 
-- Claude — `https://docs.claude.com/en/docs/about-claude/pricing`
-- OpenAI — `https://openai.com/api/pricing/`
+- Claude — `https://platform.claude.com/docs/en/about-claude/pricing`
+- OpenAI — `https://developers.openai.com/api/docs/pricing`
 - Azure OpenAI — regional, per-deployment; ask the user rather than guessing
+
+## Time-limited rates
+
+Introductory and promotional rates expire, and one that lapses between the run and the merge
+turns an accurate table into a wrong one. When a fetched rate is marked introductory,
+promotional, or dated, record the expiry alongside it and **state it in the PR body next to
+the figure**. If the expiry falls within a few weeks, show the post-expiry number too — the
+reviewer is deciding about a call site that will still be running then.
 
 If a rate cannot be fetched, ask the user for it or drop the cost column entirely and
 present the token counts alone. Token counts measured on real calls are still a real
