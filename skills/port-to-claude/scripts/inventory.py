@@ -21,8 +21,24 @@ SKIP_DIRS = {
     ".next", ".nuxt", "target", "vendor", ".mypy_cache", ".pytest_cache", ".tox",
     "site-packages", ".terraform", "coverage", ".ruff_cache",
 }
-CODE_SUFFIXES = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".go", ".rb", ".java", ".cs"}
+CODE_SUFFIXES = {
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".go", ".rb",
+    ".java", ".kt", ".scala", ".cs", ".php", ".rs", ".swift", ".ex", ".exs", ".sh", ".vue",
+    ".svelte",
+}
+# Model ids and provider hosts frequently live in config rather than code (wrangler.toml
+# [vars], k8s manifests, terraform). Scanned for signals only — no call sites are claimed
+# from these, because a config file does not call anything.
+CONFIG_SUFFIXES = {".toml", ".yaml", ".yml", ".ini", ".cfg", ".tf", ".tfvars", ".properties"}
 MAX_BYTES = 2_000_000
+
+# An OpenAI-shaped endpoint path. Deliberately not anchored to a quote: these arrive as
+# template literals (`${BASE}/v1/embeddings`), concatenations, and route constants.
+ENDPOINT_PATH = re.compile(
+    r"(?:/v1)?/(?:chat/completions|completions|responses|embeddings|moderations"
+    r"|audio/(?:transcriptions|translations|speech)"
+    r"|images/(?:generations|edits|variations))\b"
+)
 
 # (framework, regex). Order matters only for reporting; every match is recorded.
 PATTERNS = [
@@ -38,6 +54,22 @@ PATTERNS = [
     ("litellm", r"\blitellm\.(?:a)?completion\s*\("),
     ("semantic-kernel", r"\bOpenAIChatCompletion\s*\("),
     ("go-openai", r"\bopenai\.NewClient\s*\(|\bCreateChatCompletion\b"),
+    # SDK surfaces beyond chat: each is a real call site with its own port story.
+    ("openai-moderation", r"\.moderations\.create\b"),
+    ("openai-audio", r"\.audio\.transcriptions\.\w+|\.audio\.translations\.\w+|\.audio\.speech\.\w+"),
+    ("openai-images", r"\.images\.(?:generate|edit|create_variation)\b"),
+    ("openai-batch", r"\.batches\.create\b|\.fine_tuning\.jobs\.create\b"),
+    # Raw HTTP: no SDK import to key off. The host names the provider; the endpoint path
+    # names the call site. Both are needed — a house wrapper holds the host, and its
+    # callers pass only the relative path.
+    ("raw-http", r"api\.openai\.com|openai\.azure\.com|generativelanguage\.googleapis\.com"
+                 r"|api\.mistral\.ai|api\.cohere\.(?:ai|com)|api\.deepseek\.com"),
+    ("raw-http", ENDPOINT_PATH.pattern),
+    # Other providers named in the skill description.
+    ("google-genai", r"\bgenerativeai\b|\bGenerativeModel\s*\(|\bgenai\.Client\s*\(|\bChatGoogleGenerativeAI\s*\("),
+    ("mistral", r"\bMistral(?:Client|AsyncClient)?\s*\(|\bChatMistralAI\s*\("),
+    ("cohere", r"\bcohere\.(?:Client|ClientV2)\s*\(|\bChatCohere\s*\("),
+    ("ollama", r"\bollama\.(?:chat|generate)\s*\(|\bChatOllama\s*\("),
 ]
 COMPILED = [(name, re.compile(rx)) for name, rx in PATTERNS]
 
@@ -49,13 +81,27 @@ CONSTRUCTION = re.compile(
     r"\b(?:Async)?OpenAI\s*\(|\bAzureOpenAI\s*\(|\bOpenAIChatModel\s*\(|\bOpenAIModel\s*\("
     r"|\bOpenAIProvider\s*\(|\bChatOpenAI\s*\(|\bAzureChatOpenAI\s*\(|\bOpenAIChatCompletion\s*\("
     r"|\bopenai\.NewClient\s*\(|\binstructor\.from_openai\s*\("
+    r"|api\.openai\.com|openai\.azure\.com|generativelanguage\.googleapis\.com"
+    r"|api\.mistral\.ai|api\.cohere\.(?:ai|com)|api\.deepseek\.com"
+    r"|\bMistral(?:Client|AsyncClient)?\s*\(|\bcohere\.(?:Client|ClientV2)\s*\("
+    r"|\bGenerativeModel\s*\(|\bgenai\.Client\s*\("
 )
 
 
 def classify(func_src):
+    """Construction is where the diff lands; invocation is what you reason about.
+
+    An endpoint path wins over a provider host: a line may carry both (a direct
+    `post("https://api.openai.com/v1/chat/completions")`), and that is a call site, not
+    a client being built."""
+    if ENDPOINT_PATH.search(func_src):
+        return "invocation"
     return "client_construction" if CONSTRUCTION.search(func_src + "(") else "invocation"
 MODEL_HINT = re.compile(
-    r"""["'](gpt-[\w.\-]+|o\d[\w.\-]*|text-embedding-[\w.\-]+|claude-[\w.\-]+)["']""",
+    r"""["'`](gpt-[\w.\-]+|o\d[\w.\-]*|chatgpt-[\w.\-]+|text-embedding-[\w.\-]+"""
+    r"""|whisper-[\w.\-]+|tts-[\w.\-]+|dall-e-[\w.\-]+|omni-moderation-[\w.\-]+"""
+    r"""|text-moderation-[\w.\-]+|claude-[\w.\-]+|gemini-[\w.\-]+|mistral-[\w.\-]+"""
+    r"""|voyage-[\w.\-]+|command-[\w.\-]+|llama[\w.\-]*)["'`]""",
     re.IGNORECASE,
 )
 
@@ -65,9 +111,10 @@ def estimate_tokens(text):
     return max(1, round(len(text) / 4))
 
 
-def iter_files(root):
+def iter_files(root, suffixes=None):
+    suffixes = CODE_SUFFIXES if suffixes is None else suffixes
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.suffix not in CODE_SUFFIXES:
+        if not path.is_file() or path.suffix not in suffixes:
             continue
         if any(part in SKIP_DIRS for part in path.parts):
             continue
@@ -177,11 +224,25 @@ def analyze_python(path, src, rel):
     return sites
 
 
+# `import type {...} from "openai/resources/chat/completions"` contains an endpoint-shaped
+# path but calls nothing. Module specifiers are never call sites in any language.
+# Must match module specifiers only. `export const openai = new OpenAI({` is a real
+# construction site, so a bare leading `export` is not enough to skip a line.
+IMPORT_LINE = re.compile(
+    r"^\s*import\b"                              # ES/py import, incl. `import type {...}`
+    r"|^\s*export\s+(?:type\s+)?[*{][^=]*\bfrom\b"  # re-export, never an assignment
+    r"|^\s*from\s+\S+\s+import\b"                # python
+    r"|\brequire\s*\(|^\s*use\s+\S+;|^\s*#include\b"
+)
+
+
 def analyze_generic(path, src, rel):
-    """Line-regex pass for non-Python files. Coarser by design; the agent reads these."""
+    """Line-regex pass. Coarser by design; the agent reads these."""
     sites = []
     lines = src.splitlines()
     for i, line in enumerate(lines, start=1):
+        if IMPORT_LINE.search(line):
+            continue
         for framework, rx in COMPILED:
             if not rx.search(line):
                 continue
@@ -200,6 +261,55 @@ def analyze_generic(path, src, rel):
             })
             break
     return sites
+
+
+# Weak signals: evidence a provider is in use that is not, on its own, a call site.
+# The strong patterns above cannot cover every way an API gets called — a custom
+# transport, a gateway URL in an env var, a generated client. These give the agent a
+# thread to pull when the structured scan comes back thin.
+WEAK_SIGNALS = [
+    ("api-key-env", re.compile(
+        r"\b(?:OPENAI|AZURE_OPENAI|GEMINI|GOOGLE_API|MISTRAL|COHERE|DEEPSEEK|GROQ|"
+        r"TOGETHER|ANYSCALE|FIREWORKS|OPENROUTER)_API_KEY\b")),
+    ("provider-host", re.compile(
+        r"api\.openai\.com|openai\.azure\.com|generativelanguage\.googleapis\.com"
+        r"|api\.mistral\.ai|api\.cohere\.(?:ai|com)|api\.groq\.com|openrouter\.ai"
+        r"|api\.together\.xyz|api\.deepseek\.com")),
+    ("base-url-override", re.compile(
+        r"\b(?:base_url|baseURL|OPENAI_BASE_URL|OPENAI_API_BASE|api_base)\b")),
+    ("model-id-literal", MODEL_HINT),
+    ("bearer-auth", re.compile(r"Authorization[\"\':\s]+Bearer")),
+]
+
+
+def sweep_weak_signals(root, claimed):
+    """Provider evidence outside the recorded call sites.
+
+    `claimed` is the set of (file, line) already reported as call sites, so this only
+    surfaces what the structured patterns did not already explain."""
+    hits = []
+    suffixes = CODE_SUFFIXES | CONFIG_SUFFIXES | {".json", ".env", ".txt", ".md", ""}
+    for path in iter_files(root, suffixes):
+        if path.name.startswith(".env") or path.suffix in suffixes:
+            src = read(path)
+            if src is None:
+                continue
+            rel = str(path.relative_to(root))
+            for i, line in enumerate(src.splitlines(), start=1):
+                if (rel, i) in claimed or len(line) > 400:
+                    continue
+                for kind, rx in WEAK_SIGNALS:
+                    if rx.search(line):
+                        hits.append({
+                            "file": rel, "line": i, "signal": kind,
+                            "text": line.strip()[:160],
+                        })
+                        break
+        if len(hits) >= 400:
+            hits.append({"file": "…", "line": 0, "signal": "truncated",
+                         "text": "sweep capped at 400 hits; narrow the scan by hand"})
+            break
+    return hits
 
 
 def find_env_models(root):
@@ -236,16 +346,31 @@ def main():
             continue
         scanned += 1
         rel = str(path.relative_to(root))
-        if path.suffix == ".py":
-            sites.extend(analyze_python(path, src, rel))
-        else:
-            sites.extend(analyze_generic(path, src, rel))
+        found = analyze_python(path, src, rel) if path.suffix == ".py" else []
+        seen = {(s["file"], s["line"]) for s in found}
+        # The line scan catches what an AST callee match cannot: raw HTTP, URLs and
+        # endpoint paths passed as arguments, calls through house wrappers.
+        found += [s for s in analyze_generic(path, src, rel)
+                  if (s["file"], s["line"]) not in seen]
+        sites.extend(found)
+
+    deduped, seen_rows = [], set()
+    for s in sites:
+        key = (s["file"], s["line"], s["framework"], s["role"])
+        if key not in seen_rows:
+            seen_rows.add(key)
+            deduped.append(s)
+    sites = deduped
+
+    claimed = {(s["file"], s["line"]) for s in sites}
+    weak = sweep_weak_signals(root, claimed)
 
     frameworks = sorted({s["framework"] for s in sites})
     report = {
         "repo": str(root),
         "files_scanned": scanned,
         "call_sites": sites,
+        "weak_signals": weak,
         "summary": {
             "total": len(sites),
             "frameworks": frameworks,
@@ -254,6 +379,7 @@ def main():
             "structured_output": sum(1 for s in sites if s["structured_output"]),
             "prompts_resolved": sum(1 for s in sites if s.get("prompt_resolved")),
             "embeddings": sum(1 for s in sites if s["framework"] == "openai-embeddings"),
+            "weak_signal_files": len({h["file"] for h in weak}),
             "model_env_vars": find_env_models(root),
         },
         "caveats": [
@@ -265,7 +391,13 @@ def main():
             "what runs in production.",
             "role=client_construction rows are where the diff lands; role=invocation rows "
             "are what you reason about.",
-            "Embedding call sites cannot migrate to Claude; leave them alone.",
+            "Embedding call sites have no Anthropic equivalent, but they are not a dead "
+            "end — see references/model-mapping.md for the Voyage redirect.",
+            "weak_signals is provider evidence that is not itself a call site. If it names "
+            "files with no call site in them, a call pattern was missed — read those files "
+            "before concluding the inventory is complete.",
+            "A repo with provider API keys and zero call sites is a contradiction, not an "
+            "empty result. Investigate before reporting nothing found.",
         ],
     }
 
@@ -275,7 +407,8 @@ def main():
         args.out.write_text(payload, encoding="utf-8")
         inv = report["summary"]["invocations"]
         edits = report["summary"]["edit_points"]
-        print(f"{inv} invocations, {edits} edit points across {len(frameworks)} frameworks → {args.out}")
+        extra = f", {len(weak)} weak signals in {report['summary']['weak_signal_files']} files" if weak else ""
+        print(f"{inv} invocations, {edits} edit points across {len(frameworks)} frameworks{extra} → {args.out}")
     else:
         print(payload)
 

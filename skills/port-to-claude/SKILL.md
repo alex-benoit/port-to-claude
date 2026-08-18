@@ -94,8 +94,26 @@ and characterise it:
 - **Failure cost** — what breaks downstream if the output is malformed? A structured output
   that feeds a paid third-party API is worth more care than one that renders a suggestion.
 
-If the script finds nothing, do not guess. Report that the repo has no detected call sites
-and stop.
+### Reconcile the weak signals before you trust the count
+
+The script also reports `weak_signals` — provider evidence that is not itself a call site:
+API-key env names, provider hostnames, `base_url` overrides, model ids in config, hand-rolled
+`Authorization: Bearer` headers. The pattern list will never cover every way an app can call
+an API, and this is what keeps an under-report from passing as a clean result.
+
+Work through them before reporting anything:
+
+- **A file with weak signals and no call site must be opened.** It is either config the
+  migration has to touch — a model id in `wrangler.toml`, a hardcoded price table, a test
+  asserting a model string — or a call pattern the scan does not recognise.
+- **Keys or a provider SDK dependency with zero call sites is a contradiction.** Never report
+  "no call sites found" while `OPENAI_API_KEY` sits in the env or `openai` sits in
+  `requirements.txt`. Say what you found and go looking.
+- **Note any unrecognised pattern you had to read by hand**, so `references/detection.md` can
+  grow to cover it next time.
+
+If, after reconciling, the repo genuinely has no call sites, say so plainly and stop — but
+that conclusion has to survive the signals, not just the pattern match.
 
 ## Phase 2 — Recommend
 
