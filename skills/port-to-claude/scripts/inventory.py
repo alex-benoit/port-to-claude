@@ -165,6 +165,9 @@ def analyze_python(path, src, rel):
             "prompt_chars": len(prompt_text) if prompt_text else None,
             "prompt_tokens_estimated": estimate_tokens(prompt_text) if prompt_text else None,
             "prompt_preview": (prompt_text[:400] + "…") if prompt_text and len(prompt_text) > 400 else prompt_text,
+            # Full text, not the preview: the spot-check must send the real prompt or the
+            # comparison is measuring something the app never runs.
+            "prompt_full": prompt_text,
             "prompt_resolved": prompt_text is not None,
         }
         if prompt_expr and prompt_text is None:
