@@ -39,6 +39,36 @@ Read these before starting. They are what separate this from vendor spam.
    inference in the spot-check needs an Anthropic API key. Say this plainly rather than
    implying the subscription covers it.
 
+## Phase 0 — Pricing (first, always)
+
+**Populate `scripts/pricing.json` before anything else.** It ships with null rates, and
+every cost figure in the output depends on it. Doing this first means the cost column is
+available from the first table you show, rather than discovered to be missing at the end.
+
+Fetch both providers' current published rates and write them in, with today's date as
+`verified_on`:
+
+- Claude — `https://platform.claude.com/docs/en/about-claude/pricing`
+- The incumbent's pricing page (OpenAI: `https://developers.openai.com/api/docs/pricing`)
+
+Record per model: `input`, `output`, `cache_write_5m`, `cache_read`, `batch_input`,
+`batch_output`. Use the exact model ids the repo calls, so `report.py` can match them.
+
+If a rate cannot be fetched — page moved, model not listed, Azure or a negotiated
+enterprise rate — **ask the user for that number rather than guessing**. A missing rate
+means the cost column is dropped for that model, which is the designed behaviour and far
+better than a confident wrong figure.
+
+Re-fetch on every run. Rates move, and a cached `pricing.json` from last month is exactly
+the stale-number failure this phase exists to prevent.
+
+### Tokenizers differ between model generations
+
+Claude 4.7 and later use a newer tokenizer that produces roughly 30% more tokens for the
+same text than earlier models. So a Sonnet 5 and a Haiku 4.5 quote for a byte-identical
+prompt are not comparable on token count alone, and a cost estimate does not transfer
+between them. Count tokens per model — never scale one model's count by a price ratio.
+
 ## Phase 1 — Inventory (no keys, always runs)
 
 ```bash
@@ -163,4 +193,4 @@ review queues.
 
 - `references/detection.md` — call-site patterns per SDK and framework
 - `references/model-mapping.md` — task shape → Claude model and when to use effort levels
-- `references/pricing.md` — published rates with verification dates, caching and Batch maths
+- `references/pricing.md` — how to populate rates, caching and Batch maths

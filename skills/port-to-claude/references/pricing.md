@@ -7,9 +7,11 @@ move faster than a plugin gets updated, and a migration tool that quietly comput
 persuasive table from stale numbers is worse than one that refuses — the output looks
 authoritative and is wrong.
 
-So: **fetch current rates at run time and write them into `pricing.json` before running the
-cost maths.** `report.py` refuses to emit a cost column when the rates it needs are null,
-and labels every figure with the `verified_on` date it used.
+So: **Phase 0 of the skill fetches current rates and writes them into `pricing.json`
+before anything else runs.** `report.py` refuses to emit a cost column when the rates it
+needs are null, and labels every figure with the `verified_on` date it used. Re-fetch every
+run — a `pricing.json` left over from last month is the stale-number failure this exists to
+prevent.
 
 Sources to fetch:
 
@@ -56,6 +58,9 @@ call frequency before claiming the saving.
 ## Counting tokens honestly
 
 - **Anthropic** — use the token-counting endpoint. Exact, and it does not run inference.
+  Count per model: Claude 4.7 and later use a newer tokenizer producing roughly 30% more
+  tokens for the same text, so counts do not transfer between model generations and a cost
+  estimate cannot be scaled from one to another.
 - **Incumbent** — take `usage` off a real response when a key is available.
 - **Neither** — `inventory.py` falls back to a characters/4 heuristic. It is a heuristic;
   anything derived from it must be labeled **estimated** in the output, including in the PR

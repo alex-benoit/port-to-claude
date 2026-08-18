@@ -1,15 +1,32 @@
 {
-  "_comment": "Rates ship null on purpose. Fetch current pricing and fill these in before running cost maths. See references/pricing.md.",
-  "verified_on": null,
+  "_comment": "Populated at the start of a skill run by fetching the live pricing pages. Never hand-edit stale values; re-fetch. See references/pricing.md.",
+  "verified_on": "2026-08-18",
+  "sources": {
+    "anthropic": "https://platform.claude.com/docs/en/about-claude/pricing",
+    "openai": "https://developers.openai.com/api/docs/pricing"
+  },
   "currency": "USD",
   "unit": "per_million_tokens",
   "models": {
-    "_shape": {
-      "input": null,
-      "output": null,
-      "cache_write": null,
-      "cache_read": null,
-      "batch_discount": null
+    "claude-sonnet-5": {
+      "input": 2.0, "output": 10.0,
+      "cache_write_5m": 2.5, "cache_read": 0.2,
+      "batch_input": 1.0, "batch_output": 5.0
+    },
+    "claude-haiku-4-5-20251001": {
+      "input": 1.0, "output": 5.0,
+      "cache_write_5m": 1.25, "cache_read": 0.1,
+      "batch_input": 0.5, "batch_output": 2.5
+    },
+    "claude-opus-5": {
+      "input": 5.0, "output": 25.0,
+      "cache_write_5m": 6.25, "cache_read": 0.5,
+      "batch_input": 2.5, "batch_output": 12.5
+    },
+    "gpt-4o": {
+      "input": 2.5, "output": 10.0,
+      "cache_read": 1.25,
+      "batch_input": null, "batch_output": null
     }
   }
 }
