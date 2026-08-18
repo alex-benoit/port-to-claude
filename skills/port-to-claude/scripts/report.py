@@ -32,6 +32,19 @@ def cost(model, rates, input_tokens, output_tokens):
     return (input_tokens / 1e6) * entry["input"] + (output_tokens / 1e6) * entry["output"]
 
 
+def fence(text):
+    """A fence longer than any backtick run inside the text.
+
+    Model output frequently arrives already wrapped in ```json, which would close an
+    enclosing three-backtick fence early and break the rest of the PR body."""
+    longest = 0
+    run = 0
+    for ch in text:
+        run = run + 1 if ch == "`" else 0
+        longest = max(longest, run)
+    return "`" * max(3, longest + 1)
+
+
 def money(value):
     if value is None:
         return "—"
@@ -142,9 +155,9 @@ def render_site(inventory, spotcheck, rates, verified_on, site_ref):
     for (_case, vendor, model), stats in sorted(agg.items()):
         if "error" in stats:
             continue
-        text = stats["sample_text"] or ""
-        lines += [f"**{vendor} / {model}**", "", "```",
-                  text[:1200] + ("…" if len(text) > 1200 else ""), "```", ""]
+        text = (stats["sample_text"] or "")[:1200]
+        f = fence(text)
+        lines += [f"**{vendor} / {model}**", "", f, text, f, ""]
     lines.append("</details>")
     return "\n".join(lines)
 
@@ -247,10 +260,11 @@ def render(inventory, spotcheck, rates, verified_on):
             continue
         add(f"**{case} — {vendor} / {model}**")
         add("")
-        add("```")
-        text = stats["sample_text"] or ""
-        add(text[:1200] + ("…" if len(text) > 1200 else ""))
-        add("```")
+        text = (stats["sample_text"] or "")[:1200]
+        f = fence(text)
+        add(f)
+        add(text)
+        add(f)
         add("")
     add("</details>")
     add("")

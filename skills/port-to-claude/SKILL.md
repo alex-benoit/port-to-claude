@@ -169,6 +169,12 @@ Then actually read them, and report what you find:
 - **Say when the samples do not settle it.** Three samples of subjective prose quality is a
   prompt for the reviewer's judgement, not a verdict. Show the text and let them decide.
 
+**Fence the samples safely.** Model output routinely arrives already wrapped in ```` ```json ````,
+which closes a three-backtick fence early and breaks every section below it in the rendered
+PR. `report.py` picks a fence longer than the longest backtick run in the text; do the same
+in anything you hand-write. **Render the body and look at it before posting** — a broken
+description destroys the credibility of everything in it.
+
 ### Benchmark against what actually runs
 
 Read the deployed model, not the code default — they diverge. Check the repo's `.env`, the
