@@ -149,6 +149,38 @@ in here.
 For structured-output call sites, the metric that matters is **schema adherence**, not
 prose quality. Validate each response against the declared schema and report the pass rate.
 
+### Every call site must show real output, side by side
+
+**A cost table alone cannot support the decision.** The question is never "is Claude
+cheaper" — it is "is this output worth this price", and that is unanswerable without seeing
+the text. Every call site's PR body carries **at least one verbatim sample from the
+incumbent and from each candidate Claude model**, on the same input, in a `<details>` block.
+Never summarise or characterise an output in place of showing it.
+
+Then actually read them, and report what you find:
+
+- **Check each output against the constraints the system prompt states.** Prompts usually
+  forbid specific things — a preamble, an imperative opening, naming example companies,
+  ellipses in a quote. Grep the samples for those exact violations and report the rate. This
+  is the highest-value check in the whole run and it is invisible to token counts and schema
+  validation alike. A model can be schema-valid, cheap, and still ignore the brief.
+- **Note verbosity differences**, since they drive cost. If a model is more expensive purely
+  because it writes more, say so — that is a prompt fix, not a vendor verdict.
+- **Say when the samples do not settle it.** Three samples of subjective prose quality is a
+  prompt for the reviewer's judgement, not a verdict. Show the text and let them decide.
+
+### Benchmark against what actually runs
+
+Read the deployed model, not the code default — they diverge. Check the repo's `.env`, the
+deployment platform's environment variables, and any config table, and reconcile them
+before choosing a baseline. If they disagree, **report the mismatch as a finding** and ask
+which is authoritative before running.
+
+If the incumbent has a materially cheaper model in the same family, benchmark that too. The
+honest comparison is against the best-value option the incumbent offers, not the one that
+happens to be configured — and it changes the answer far more than the choice of Claude
+model does.
+
 If the user has no Anthropic key, this is the moment to point them at
 `https://console.anthropic.com` — they are asking for the number that requires it.
 
