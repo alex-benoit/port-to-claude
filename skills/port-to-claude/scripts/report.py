@@ -62,6 +62,93 @@ def aggregate(results):
     return out
 
 
+def render_site(inventory, spotcheck, rates, verified_on, site_ref):
+    """One call site's own PR body. Kept narrow on purpose: a reviewer of a single-site
+    PR should not have to read the whole migration to judge their one change."""
+    path, _, line = site_ref.partition(":")
+    match = next(
+        (s for s in inventory.get("call_sites", [])
+         if s.get("role") == "invocation" and s["file"].endswith(path)
+         and (not line or str(s["line"]) == line)),
+        None,
+    )
+    if match is None:
+        raise SystemExit(f"no invocation found for --site {site_ref}")
+
+    lines = [
+        "## What this PR does",
+        "",
+        f"Switches one call site — `{match['file']}:{match['line']}` — to Claude. "
+        "Nothing else changes. It is part of a stack; the base PR added the config and "
+        "dependency, and the incumbent is removed in the final one.",
+        "",
+        "## This call site",
+        "",
+        f"- Structured output: **{'yes' if match['structured_output'] else 'no'}**"
+        + (f" (`{match['output_schema']}`)" if match.get("output_schema") else ""),
+    ]
+    if match.get("prompt_tokens_estimated"):
+        lines.append(
+            f"- System prompt: ~{match['prompt_tokens_estimated']} tokens (estimated), "
+            f"from {match['prompt_source']}"
+        )
+    if not match.get("prompt_resolved"):
+        lines.append("- **Prompt is built at runtime** — reviewed by hand, not statically resolved")
+    lines.append("")
+
+    rows = []
+    if spotcheck:
+        case_ids = {
+            r["case"] for r in spotcheck.get("results", [])
+            if r.get("source", "").endswith(f"{match['file']}:{match['line']}")
+        }
+        rows = [r for r in spotcheck.get("results", []) if r["case"] in case_ids]
+
+    if not rows:
+        lines += [
+            "## Measurement",
+            "",
+            "**Tier: estimated.** No spot-check covered this call site, so the model choice "
+            "here is reasoned from task shape rather than measured. Prompt size above comes "
+            "from a characters/4 heuristic.",
+            "",
+        ]
+        return "\n".join(lines)
+
+    agg = aggregate(rows)
+    priced = bool(rates)
+    lines += ["## Side-by-side", "",
+              f"**Tier: measured.** {spotcheck.get('samples_per_case', 1)} sample(s).",
+              ""]
+    header = "| Vendor | Model | In tok | Out tok | Latency (med) | Schema"
+    divider = "|---|---|---|---|---|---"
+    if priced:
+        header, divider = header + " | Cost/call", divider + "|---"
+    lines += [header + " |", divider + "|"]
+    for (_case, vendor, model), stats in sorted(agg.items()):
+        if "error" in stats:
+            lines.append(f"| {vendor} | `{model}` | — | — | — | **failed**" + (" | — |" if priced else " |"))
+            continue
+        schema = f"{stats['schema_pass'][0]}/{stats['schema_pass'][1]}" if stats["schema_pass"] else "—"
+        row = (f"| {vendor} | `{model}` | {stats['input_tokens'] or '—'} | "
+               f"{stats['output_tokens'] or '—'} | {stats['latency_s']}s | {schema}")
+        if priced:
+            row += f" | {money(cost(model, rates, stats['input_tokens'] or 0, stats['output_tokens'] or 0))}"
+        lines.append(row + " |")
+    lines += ["", f"> {spotcheck.get('caveat', '')}", ""]
+
+    lines.append("<details><summary>Sample outputs</summary>")
+    lines.append("")
+    for (_case, vendor, model), stats in sorted(agg.items()):
+        if "error" in stats:
+            continue
+        text = stats["sample_text"] or ""
+        lines += [f"**{vendor} / {model}**", "", "```",
+                  text[:1200] + ("…" if len(text) > 1200 else ""), "```", ""]
+    lines.append("</details>")
+    return "\n".join(lines)
+
+
 def render(inventory, spotcheck, rates, verified_on):
     lines = []
     add = lines.append
@@ -185,6 +272,7 @@ def main():
     ap.add_argument("--inventory", type=Path, required=True)
     ap.add_argument("--results", type=Path, help="spot-check results (omit for estimated tier)")
     ap.add_argument("--pricing", type=Path, default=HERE / "pricing.json")
+    ap.add_argument("--site", help="render one call site's PR body, e.g. app/foo.py:42")
     ap.add_argument("--out", type=Path)
     args = ap.parse_args()
 
@@ -192,7 +280,10 @@ def main():
     spotcheck = json.loads(args.results.read_text(encoding="utf-8")) if args.results and args.results.exists() else None
     rates, verified_on = load_pricing(args.pricing)
 
-    body = render(inventory, spotcheck, rates, verified_on)
+    if args.site:
+        body = render_site(inventory, spotcheck, rates, verified_on, args.site)
+    else:
+        body = render(inventory, spotcheck, rates, verified_on)
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(body, encoding="utf-8")

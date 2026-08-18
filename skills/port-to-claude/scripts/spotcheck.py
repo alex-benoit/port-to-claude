@@ -173,7 +173,10 @@ def main():
                     out["schema_error"] = reason
 
                 results.append({
-                    "case": case["id"], "vendor": vendor, "model": model,
+                    "case": case["id"],
+                    # Carried through so report.py --site can attribute rows to a call site.
+                    "source": case.get("source", ""),
+                    "vendor": vendor, "model": model,
                     "sample": sample, **out,
                 })
                 status = "ERROR" if "error" in out else f"{out.get('latency_s')}s"

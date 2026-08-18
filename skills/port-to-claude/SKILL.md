@@ -84,6 +84,25 @@ which one produced the numbers.
 | **Baseline** | incumbent only | Real incumbent tokens/latency/cost. Claude side stays published-pricing estimate. |
 | **Measured** | both | Real tokens, latency, cost and side-by-side output for both. The only tier that can speak to quality. |
 
+### Finding the keys
+
+Look for the incumbent key in the environment, then in the repo's `.env` / `.env.local`.
+Look for `ANTHROPIC_API_KEY` the same way.
+
+**If there is no Anthropic key, stop and ask the user — do not silently fall back to the
+estimated tier.** They may well have a key you cannot see, and the choice of whether to
+spend a few cents proving the migration is theirs, not yours. Ask with these options:
+
+- **Paste a key and run the real comparison** — measured tier. State roughly how many calls
+  it will make and that the cost is cents, so the tradeoff is legible.
+- **Skip it, go with reasoning alone** — estimated tier. Say plainly that the PRs will then
+  carry no measured numbers, and name the specific call site whose risk that leaves
+  unresolved.
+- **Get a key first** — point at `https://console.anthropic.com`, then re-run.
+
+Take a pasted key through the environment for the run only. Never write it to a file,
+never echo it, never put it in a PR body or commit.
+
 Generate inputs by **synthesising representative fixtures in a temp directory** from the
 repo's own types, tests, and schemas. Never pull production data, never write fixtures into
 the repo.
@@ -103,23 +122,42 @@ prose quality. Validate each response against the declared schema and report the
 If the user has no Anthropic key, this is the moment to point them at
 `https://console.anthropic.com` — they are asking for the number that requires it.
 
-## Phase 4 — The PR
+## Phase 4 — The PRs
+
+**One PR per call site, not one PR for the migration.** A single sweeping PR forces an
+all-or-nothing decision on a change whose whole appeal is that it is reversible. Separate
+PRs let a team migrate the cheapest call site, watch it in production for a week, and
+continue — or stop. That is the shape that actually gets merged.
+
+They stack, because the call-site changes share a base:
+
+1. **Base PR — config and dependency.** Adds the Anthropic settings and the SDK/extra
+   **without removing the incumbent**. No behaviour change; nothing calls it yet. This PR
+   is safe to merge on its own and makes every later one small.
+2. **One PR per call site**, each branched off the previous so its diff shows only its own
+   change. Body carries that call site's own evaluation: task shape, model chosen and why,
+   its own spot-check rows, and the specific failure mode a reviewer should look for.
+3. **Cleanup PR — remove the incumbent** config, dependency, and now-stale references. Only
+   valid once every call site has moved, so it goes last and merges last.
+
+Rules for each PR in the stack:
+
+- Set the base branch to the previous PR's branch, so reviewers see one change at a time.
+- The diff is that call site's switch and nothing else. No refactors, no drive-by fixes.
+- Verify the repo still builds / type-checks / passes tests **at every step in the stack**,
+  not just at the end. A stack that only works at the tip is one PR wearing a costume.
+- If two call sites live in the same file, they still get their own PR — stack them so the
+  second rebases cleanly.
+
+Generate each body from the shared analysis plus that call site's rows:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/skills/port-to-claude/scripts/report.py" --inventory "$TMP/inventory.json" --results "$TMP/results.json" --out "$TMP/pr-body.md"
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/port-to-claude/scripts/report.py" --inventory "$TMP/inventory.json" --results "$TMP/results.json" --site "app/foo.py:42" --out "$TMP/pr-foo.md"
 ```
 
-Then:
-
-1. Branch from the current head.
-2. Apply **only** the provider switch — client/model construction and config. No
-   refactors, no drive-by fixes, no new files, no reformatting. If the switch needs a
-   dependency added, that is in scope; nothing else is.
-3. Verify the repo still builds / type-checks / passes tests. Report failures honestly.
-4. Show the user the diff and the rendered PR body. **Ask before pushing.**
-
-The PR body carries: the per-call-site table, which tier produced the numbers, the
-side-by-side samples, what the tool recommends *against* switching, and how to reproduce.
+Show the user the full stack — every branch, every diff, every body — and **ask before
+pushing any of it.** Pushing is outward-facing, and a nine-PR stack lands on other people's
+review queues.
 
 ## Reference files
 
